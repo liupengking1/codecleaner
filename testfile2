@@ -1,0 +1,163 @@
+static char *ipmsg_id =   
+    "@(#)Copyright (C) H.Shirouzu 1996-2002   ipmsg.cpp Ver2.00";  
+/* ======================================================================== 
+    Project  Name           : IP Messenger for Win32 
+    Module Name             : IP Messenger Application Class 
+    Create                  : 1996-06-01(Sat) 
+    Update                  : 2002-11-03(Sun) 
+    ======================================================================== */  
+#include <time.h>  
+#include "tlib.h"  
+#include "resource.h"  
+#include "ipmsg.h"  
+#define IPMSG_CLASS "ipmsg_class"  
+TMsgApp::TMsgApp(HINSTANCE _hI, LPSTR _cmdLine, int _nCmdShow) : TApp(_hI, _cmdLine, _nCmdShow)  
+{  
+    // srand和Time是C语言的库函数。前者用来设置随机数的种子数。后者用来获取当前系统的时间。  
+    // 为什么需要设置随机数的种子数呢？原因在于随机数的产生。随机数的产生函数只能保证运行时期间本次  
+    // 产生的随机数和下次产生的随机数之间是随即的。而无法保证本示例和下一个示例之间产生的随机数随机。  
+    // 也就是说，你第一次运行是生产的随机数是1、7、2、9...，下次的时候还是1、7、2、9...。为什么会出现  
+    // 这种问题呢？原因就是用于生产随机数的种子是一样的。所以，如果将种子设置为程序运行时就可以避免这  
+    // 个问题了。因为，这个时间是个随机数，且重复的可能性几乎为0.  
+    srand((UINT)Time());  
+}  
+TMsgApp::~TMsgApp()  
+{  
+}  
+//////////////////////////////////////////////////////////////  
+/// @brief 初始化，解析命令行参数并创建主窗口  
+///   
+///      需要注意的是，飞鸽传输的界面完全是直接使用windows API实现的。并没有使用MFC。这儿是它小巧绿色的原因之一。  
+///     对于初学者来说，分析它的代码可以更好的了解GUI程序的本质。  
+///   
+/// @author Allan  
+/// @date 2009-3-9  
+///   
+/// @note 2009-3-9  Allan First Create.  
+void TMsgApp::InitWindow(void)  
+{  
+    WNDCLASS    wc;  
+    HWND        hWnd;  
+    char        class_name[MAX_PATH] = IPMSG_CLASS, *tok, *msg, *p;  
+    ULONG       nicAddr = 0;///< 通信使用的IP地址  
+    int         port_no = atoi(cmdLine);///< 通信使用的端口号。可以使用参数进行指定，如果通过参数指定端口号的话，该参数必需是第一个。  
+    // 如果没有指定，使用默认的端口号IPMSG_DEFAULT_PORT  
+    if (port_no == 0)  
+        port_no = IPMSG_DEFAULT_PORT;  
+    // 分析命令行参数。每个参数以/开始。  
+    if ((tok = strchr(cmdLine, '/')) && separate_token(tok, ' ', &p))  
+    {  
+        BOOL    diag = TRUE;  
+        DWORD   status = 0xffffffff;  
+        if (stricmp(tok, "/NIC") == 0)  // 该参数用于指定通信使用的IP地址  
+        {  
+            if (tok = separate_token(NULL, ' ', &p))  
+                nicAddr = ResolveAddr(tok);// 将IP地址字符串（例如192.168.0.123）转换成数字  
+        }  
+        else if (stricmp(tok, "/MSG") == 0) // 发消息的具体参数，是否记录日志之类的  
+        {  
+            MsgMng  msgMng(nicAddr, port_no);  
+            ULONG   command = IPMSG_SENDMSG|IPMSG_NOADDLISTOPT|IPMSG_NOLOGOPT, destAddr;  
+            // command的作用这儿先不说，你正需要知道，它是发送消息时的一些规则。  
+            while ((tok = separate_token(NULL, ' ', &p)) != NULL && *tok == '/') {  
+                if (stricmp(tok, "/LOG") == 0)  
+                    command &= ~IPMSG_NOLOGOPT;  
+                else if (stricmp(tok, "/SEAL") == 0)  
+                    command |= IPMSG_SECRETOPT;  
+            }  
+            if ((msg = separate_token(NULL, 0, &p)) != NULL)  
+            {  
+                diag = FALSE;  
+                 if ((destAddr = ResolveAddr(tok)) != NULL)  
+                     // 将命令行参数指定的消息发送出去，具体发送过程详见该函数注释。  
+                    status = msgMng.Send(destAddr, htons(port_no), command, msg) ? 0 : -1;  
+            }  
+        }  
+        // 如果没有通信地址，那么弹出错误提示——命令行参数——并退出程序。  
+        if (nicAddr == 0)  
+        {  
+            if (diag)  
+                MessageBox(0, "ipmsg.exe [portno] [/MSG [/LOG] [/SEAL] <hostname or IP addr> <message>]\r\nipmsg.exe [portno] [/NIC nic_addr]", MSG_STR, MB_OK);  
+            ::ExitProcess(status);// 杀死本进程，整个程序也就结束了。  
+            return;  
+        }  
+    }  
+    // inet_ntoa(*(in_addr *)&nicAddr)，不要怀疑这种用法的正确性。确实没有问题（废话，不然早就被人发现并改正了）。但是，绝对不推荐这样做。  
+    // 为什么呢？虽然结构体in_addr等同于u_long。但是，如何保证以后不会出现变化？如何保证在其他运行时库时不发生变化？所以，还是老老实实的  
+    // 定义一个临时变量的好。当然，如果你知道你在干什么，也无所谓。像此处就是这样。因为WinSocketk肯定不会变化的。所以，这种用法不会出问题。  
+    // 但是，一定注意新手末学。老实为妙。否则，程序一旦出问题，很难找到原因。  
+    if (port_no != IPMSG_DEFAULT_PORT || nicAddr)  
+        wsprintf(class_name, nicAddr ? "%s_%d_%s" : "%s_%d", IPMSG_CLASS, port_no, inet_ntoa(*(in_addr *)&nicAddr));  
+    memset(&wc, 0, sizeof(wc));  
+    wc.style            = CS_DBLCLKS;  
+    wc.lpfnWndProc      = TApp::WinProc;  
+    wc.cbClsExtra       = 0;  
+    wc.cbWndExtra       = 0;  
+    wc.hInstance        = hI;  
+    wc.hIcon            = ::LoadIcon(hI, (LPCSTR)IPMSG_ICON);  
+    wc.hCursor          = ::LoadCursor(NULL, IDC_ARROW);  
+    wc.hbrBackground    = NULL;  
+    wc.lpszMenuName     = NULL;  
+    wc.lpszClassName    = class_name;  
+    // 创建一个互斥对象，以防止两个实例同时运行这段代码，从而造成“死锁”。  
+    // 我想实际运行时应该几乎不可能出现这种情况。下面这个过程应该很快执行完，假如需要500毫秒。也就是说，只有在500毫秒内同时运行程序两次以上，  
+    // 才会出现这种可能。  
+    HANDLE  hMutex = ::CreateMutex(NULL, FALSE, class_name);  
+    ::WaitForSingleObject(hMutex, INFINITE);  
+    if ((hWnd = ::FindWindow(class_name, NULL)) != NULL || ::RegisterClass(&wc) == 0)  
+    {  
+        if (hWnd != NULL)  
+            ::SetForegroundWindow(hWnd);  
+        ::ExitProcess(0xffffffff);  
+        return;  
+    }  
+    // 创建一个窗口。这个窗口就是飞鸽传输的主窗口了。我们可以看到，只要windows版本大于等于4(WinXP是5.1)，程序起来时主窗口就是最小化的。  
+    // 从这儿，我们也可以看出，WinMain的最后一个参数，在飞鸽传书里面并没有被使用。  
+    mainWnd = new TMainWin(nicAddr, port_no);  
+    mainWnd->Create(class_name, IP_MSG, WS_OVERLAPPEDWINDOW | (IsNewShell() ? WS_MINIMIZE : 0));  
+    ::ReleaseMutex(hMutex);  
+    ::CloseHandle(hMutex);  
+}  
+//////////////////////////////////////////////////////////////  
+/// @brief Win32 GUI程序的入口函数  
+///   
+///      在Windows下，对于GUI程序来说其入口函数肯定是WinMain。而对于CUI（命令行程序）来说，其入口函数  
+/// 就是大家非常熟悉的main。不要问我为什么。这只是一个规定而已。  
+///   
+/// @param hI :  
+///               实例句柄。  
+///         该程序的唯一标示符，相当于一个ID。在调用很多windowsAPI的时候需要用到这个参数。为什么需要呢？  
+///     原因很简单。为了识别出你到底是谁。那么为什么需要标示我自己是谁呢？这就要不得不提到操作系统对于进程的管理了。  
+///     说起来很复杂，其实很简单。操作系统不信任（也不能信任）应用程序，所以，它需要把很多信息隐藏起来，不让你能直接访问。  
+///     于是，操作系统就分配给你一个ID，用来标示你是谁。这个ID就是实例句柄。  
+///         那么，为什么不用程序的名字做为这个ID进行标示呢？一来不方便。程序的名字可能会比较长，且长短不一，如果每次都进行  
+///     字符串比较的话效率很低。另一方面，会重名。对于大多数程序来说，都可以运行多次。比如记事本。也就是说，对于同一个  
+///     EXE文件，在内存中可能对应多个进程。所以，无法使用程序的名字或完整的路径名做为标示符。  
+/// @param HINSTANCE :  
+///               该参数在Win32下，不再使用。仅仅在16位的WIndows下才会使用。  
+/// @param cmdLine :  
+///               命令行参数。  
+///         你可能会惊奇。GUI程序也可能有命令行参数？是的。GUI程序完全可以有命令行参数。而且，GUI程序的参数还非常的常见。  
+///     举个例子。当我们双击一个MP3时，会运行一个播放器并播放该文件。这是怎么实现的呢？实际上，就是操作系统以该MP3的完整路径名做为参数运行  
+///     相关的程序。此时程序运行时cmdLine就是你双击的MP3的名字。至于，操作系统是如何知道你双击MP3应该运行哪个程序的。这儿就不再赘述了。如果  
+///     感兴趣的话，可以查找一下“文件关联”相关的资料。  
+///         不过，该字符串的内容是否和命令行程序一样呢？自己动手写个小程序试一下吧。  
+/// @param nCmdShow :  
+///               显示方式。  
+///         对于GUI程序来说，大多数情况下都是有一个窗口的。那么这个窗口在启动的时候应该是最大化、最小化还是应该隐藏呢？就由这个参数决定。  
+///     当然，这是运行该程序的人的期望。程序是否按照运行者的期望去运行，那就看程序是如何实现的了。  
+///  
+/// @return   
+///       
+///   
+/// @author Allan  
+/// @date 2009-3-9  
+///   
+/// @note 2009-3-9  Allan First Create.  
+int WINAPI WinMain(HINSTANCE hI, HINSTANCE, LPSTR cmdLine, int nCmdShow)  
+{  
+    // App对象，至于做什么用，请看后面的注释。  
+    TMsgApp app(hI, cmdLine, nCmdShow);  
+    // 程序开始运行。该函数一旦返回，程序也就结束了。  
+    return  app.Run();  
+}   

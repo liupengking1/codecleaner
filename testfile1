@@ -1,0 +1,11 @@
+this is useful information 1 /* this is a block comment within a single line*/
+
+                      this is useful information 2
+this is useful information 3 /* several lines comment
+line 1
+line 2
+*/ this is useful information 4
+this is useful information 5 //this is a line comment
+                     
+//this is a line comment
+this is useful information 6  

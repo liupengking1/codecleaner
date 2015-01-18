@@ -1,0 +1,127 @@
+/*Code name: code_clean, the function of this program is to remove C/C++ comments and empty lines from several files.*/
+#include "code_clean.h"
+/*define signal to act on interrupt*/
+static volatile sig_atomic_t handle_signal = 0;
+static void sigint_handler(int signo) {
+  handle_signal = signo;
+  return;
+}
+/*print usage information on screen*/
+void print_usage() {
+  printf("\nUsage:\n\ncode_cleaner file1 [file2] ...\n\n");
+}
+/*main function begins*/
+int main (int argc, char *argv[])
+{
+  int i = 0;
+  char** new_filenames = NULL;
+  int status = 0;
+  struct timeval start_time;
+  struct timeval end_time;
+  double time_diff = 0.0;
+  struct sigaction sig;
+  int child_ret_value = 0;
+  int file_num = 0;
+  pid_t* child = NULL;
+  int* child_active = NULL;
+  print_log("START");
+  sigemptyset(&sig.sa_mask);
+  sig.sa_flags = 0;
+  sig.sa_handler = sigint_handler;
+  if (sigaction(SIGINT, &sig, NULL) != 0) {
+    perror("main(): sigaction() failed");
+    exit(EXIT_FAILURE);
+  }
+/*check if the the input format is right*/
+ if (argc < 2)
+ {
+  print_usage();
+  exit(EXIT_FAILURE);
+ }
+ file_num = argc - 1;
+/*check if the input files are accessable */
+for (i = (argc-file_num); i < argc; i++) {
+    if (access(argv[i], F_OK) != 0) {
+      print_log("%s: does not exist", argv[i]);
+      exit(EXIT_FAILURE);
+    }
+    else if (access(argv[i], R_OK) != 0) {
+      print_log("%s: can not be read", argv[i]);
+      exit(EXIT_FAILURE);
+    } 
+    else {
+      print_log("checking: %s is OK", argv[i]);
+    }
+  }
+/*malloc for new filenames with format file.cleaned */
+  new_filenames = init_new_filenames(file_num, (argv+(argc-file_num)));
+  if (new_filenames == NULL)
+    exit(EXIT_FAILURE);
+/*malloc for child pids */
+  child = init_child(file_num);
+  if (child == NULL)
+    exit(EXIT_FAILURE);
+  child_active = init_child_active(file_num);
+/*malloc table for active child processes */
+  if (child_active == NULL)
+    exit(EXIT_FAILURE);
+/*if everything is read, get the system time in order to calculate total processing time */
+  if (gettimeofday(&start_time, NULL) != 0) {
+    perror("main(): gettimeofday() failed");
+    exit(EXIT_FAILURE);
+  }
+/*use function fork to generate child processes for each file */
+  for (i = 0; i < file_num; i++) {
+    if ((child[i] = fork()) < 0) {
+      perror("main(): fork() failed");
+      exit(EXIT_FAILURE);
+    }
+/*if the pid indicts the process is child process, use process_file function to process the input file */
+    if (child[i] == 0) {                              
+      child_ret_value = process_file(argv[i+(argc-file_num)], 
+				     new_filenames[i], 
+				     &handle_signal);
+      free_new_filenames(new_filenames, file_num);
+      free(child);
+      free(child_active);
+      return child_ret_value;
+    }
+    child_active[i] = 1;
+  }
+  i = 0;
+/*the parent process wait for all child processes are not active, i.e. every file is processed */
+  while (is_child_active(child_active, file_num)) {
+    if (waitpid(child[i], &status, WUNTRACED) == -1) {
+      print_log("Interrupted!");
+    }
+    else {
+      if (WIFEXITED(status) != 0) {
+	                                                              
+	child_active[i] = 0;
+      }
+      if (WIFSIGNALED(status)) {
+	                                                                                               
+	child_active[i] = 0;
+      }
+    }
+    i++;
+    if (i >= file_num) {
+      i = 0;
+    }
+  }
+/*get the system time at this moment, and calculate the time interval of the total process*/
+  if (gettimeofday(&end_time, NULL) != 0) {
+    perror("main(): gettimeofday() failed");
+    exit(EXIT_FAILURE);
+  }
+  time_diff = 
+    (((end_time.tv_sec - start_time.tv_sec)*1000000.0) 
+     + (end_time.tv_usec - start_time.tv_usec))/1000000.0;
+  print_log("All files processed in %.2f s", time_diff);
+/*free memory */
+  free_new_filenames(new_filenames, file_num);
+  free(child);
+  free(child_active);
+  print_log("END");
+  exit(EXIT_SUCCESS);
+}
